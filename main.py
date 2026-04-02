@@ -6,6 +6,7 @@ import os
 from builders.model_builder import build_model
 from utils.postprocess import postprocess
 from utils.metrics import run_evaluation
+from huggingface_hub import login
 
 
 def parse_args():
@@ -19,7 +20,13 @@ def load_done_ids(path):
     if os.path.exists(path):
         with open(path, encoding='utf-8') as f:
             for line in f:
-                done_ids.add(json.loads(line)["id"])
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    done_ids.add(json.loads(line)["id"])
+                except (json.JSONDecodeError, KeyError):
+                    continue               # bỏ qua dòng bị corrupt
     return done_ids
 
 
@@ -28,7 +35,13 @@ def load_results(path):
     if os.path.exists(path):
         with open(path, encoding='utf-8') as f:
             for line in f:
-                results.append(json.loads(line))
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    results.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
     return results
 
 
@@ -38,6 +51,10 @@ def main():
     # Load config
     with open(args.config_file, encoding='utf-8') as f:
         cfg = yaml.safe_load(f)
+        
+    hf_token = os.getenv("HF_TOKEN")
+    if hf_token:
+        login(token=hf_token)
 
     # Load model
     model = build_model(cfg)
@@ -57,26 +74,28 @@ def main():
     done_ids = load_done_ids(output_path)
 
     # Inference loop 
-    for i, sample in enumerate(data):
-        if i in done_ids:
-            continue
 
-        text = sample['text']
-        prompt = model.build_prompt(text)
-        raw = model.generate(prompt)
-        para = postprocess(raw, text)
+    with open(output_path, 'a', encoding='utf-8') as f:
+        for i, sample in enumerate(data):
+            if i in done_ids:
+                continue
 
-        item = {
-            "id": i,
-            "original": text,
-            "raw_output": raw,
-            "paraphrase": para
-        }
+            text = sample['text']
+            prompt = model.build_prompt(text)
+            raw = model.generate(prompt)
+            para = postprocess(raw, text)
 
-        with open(output_path, 'a', encoding='utf-8') as f:
+            item = {
+                "id": i,
+                "original": text,
+                "prompt": prompt,
+                "raw_output": raw,
+                "paraphrase": para
+            }
+
             f.write(json.dumps(item, ensure_ascii=False) + '\n')
 
-        print(f"Done {i+1}/{len(data)}")
+            print(f"[{i+1}/{len(data)}] Done")
 
     # Load lại toàn bộ kết quả để evaluate
     results = load_results(output_path)
