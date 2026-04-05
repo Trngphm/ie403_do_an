@@ -88,7 +88,6 @@ def main():
             item = {
                 "id": i,
                 "original": text,
-                "prompt": prompt,
                 "raw_output": raw,
                 "paraphrase": para
             }
